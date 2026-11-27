@@ -3998,7 +3998,7 @@ final class Bubble implements ChatHub.Listener {
     /** Navigation with Back/Home/Recents buttons (3- or 2-button), not gestures: the bar is a full button row. */
     private boolean navButtons() {
         android.view.WindowInsets in = root == null ? null : root.getRootWindowInsets();
-        if (in == null) return false;
+        if (in == null) return dimension("navigation_bar_height") >= dp(40);
         return Math.max(in.getStableInsetBottom(),
                 Math.max(in.getStableInsetLeft(), in.getStableInsetRight())) >= dp(40);
     }
