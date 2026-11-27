@@ -102,7 +102,10 @@ jobs:
           submodules: true
           path: rebuild-check # a second copy at another path, as F-Droid's build machine would have
 
+      # This comparison needs the signed GitHub/F-Droid APK produced with the repository keystore.
+      # Without signing secrets both release APKs are unsigned, so apksigcopier cannot compare signatures.
       - name: Check the F-Droid APK is reproducible
+        if: env.BUDDY_KEYSTORE != ''
         run: |
           pip install --quiet apksigcopier
           export PATH="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1):$PATH" # apksigner
