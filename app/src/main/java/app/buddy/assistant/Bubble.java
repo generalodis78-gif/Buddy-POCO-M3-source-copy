@@ -152,7 +152,7 @@ final class Bubble implements ChatHub.Listener {
         buildPanel();
         followKeyboard();
         root.setOnTouchListener((v, e) -> {
-            if (e.getAction() == MotionEvent.ACTION_OUTSIDE && expanded && pendingConfirm == null) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU && e.getAction() == MotionEvent.ACTION_OUTSIDE && expanded && pendingConfirm == null) {
                 // An edge swipe for Back also lands outside the panel; wait briefly so Back can cancel this.
                 root.removeCallbacks(outsideCollapse);
                 root.postDelayed(outsideCollapse, 350);
