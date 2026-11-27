@@ -3365,7 +3365,7 @@ final class Bubble implements ChatHub.Listener {
         thumbLp.width = w;
         thumbLp.height = h;
         if (free) { // where the user put it, kept on the screen
-            Rect all = wm.getCurrentWindowMetrics().getBounds();
+            Rect all = screen();
             thumbLp.gravity = Gravity.TOP | Gravity.START;
             thumbLp.x = Math.max(usable.left, Math.min(usable.right - w, Math.round(thumbX * all.width())));
             thumbLp.y = Math.max(0, Math.min(usable.bottom - usable.top - h, Math.round(thumbY * all.height())));
