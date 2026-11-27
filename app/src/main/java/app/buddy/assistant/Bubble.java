@@ -37,10 +37,6 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 import android.os.Build;
-import android.window.BackEvent;
-import android.window.OnBackAnimationCallback;
-import android.window.OnBackInvokedCallback;
-import android.window.OnBackInvokedDispatcher;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -156,7 +152,7 @@ final class Bubble implements ChatHub.Listener {
         buildPanel();
         followKeyboard();
         root.setOnTouchListener((v, e) -> {
-            if (e.getAction() == MotionEvent.ACTION_OUTSIDE && expanded && pendingConfirm == null) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU && e.getAction() == MotionEvent.ACTION_OUTSIDE && expanded && pendingConfirm == null) {
                 // An edge swipe for Back also lands outside the panel; wait briefly so Back can cancel this.
                 root.removeCallbacks(outsideCollapse);
                 root.postDelayed(outsideCollapse, 350);
@@ -785,15 +781,19 @@ final class Bubble implements ChatHub.Listener {
      * slides (insets animation), so the panel shrinks with it instead of jumping afterwards.
      */
     private void followKeyboard() {
-        root.setWindowInsetsAnimationCallback(new android.view.WindowInsetsAnimation.Callback(
-                android.view.WindowInsetsAnimation.Callback.DISPATCH_MODE_STOP) {
-            @Override
-            public android.view.WindowInsets onProgress(android.view.WindowInsets insets,
-                                                         java.util.List<android.view.WindowInsetsAnimation> running) {
-                applyIme(insets);
-                return insets;
-            }
-        });
+        // WindowInsetsAnimation was added in API 30. API 29 uses the accessibility service's
+        // keyboard-top callback (onKeyboardTop) and the legacy visible insets listener below.
+        if (Build.VERSION.SDK_INT >= 30) {
+            root.setWindowInsetsAnimationCallback(new android.view.WindowInsetsAnimation.Callback(
+                    android.view.WindowInsetsAnimation.Callback.DISPATCH_MODE_STOP) {
+                @Override
+                public android.view.WindowInsets onProgress(android.view.WindowInsets insets,
+                                                             java.util.List<android.view.WindowInsetsAnimation> running) {
+                    applyIme(insets);
+                    return insets;
+                }
+            });
+        }
         root.setOnApplyWindowInsetsListener((v, insets) -> {
             applyIme(insets);
             return insets;
@@ -816,7 +816,13 @@ final class Bubble implements ChatHub.Listener {
     }
 
     private void applyIme(android.view.WindowInsets insets) {
-        insetIme = insets.getInsets(android.view.WindowInsets.Type.ime()).bottom;
+        // The typed IME insets API is API 30. On API 29, onKeyboardTop() supplies the
+        // keyboard position from the accessibility service; do not mistake the nav bar for IME.
+        if (Build.VERSION.SDK_INT >= 30) {
+            insetIme = insets.getInsets(android.view.WindowInsets.Type.ime()).bottom;
+        } else {
+            insetIme = 0;
+        }
         fitKeyboard();
     }
 
@@ -870,8 +876,7 @@ final class Bubble implements ChatHub.Listener {
         // "full" goes edge to edge (Android's own Back swipe still works over it: the system takes it first);
         // "compact" keeps clear of the edges, past the system's gesture areas, for apps with their own side gestures
         // (issue #3)
-        android.graphics.Insets edges = wm.getCurrentWindowMetrics().getWindowInsets()
-                .getInsets(android.view.WindowInsets.Type.systemGestures());
+        Rect edges = gestureInsets();
         boolean compact = "compact".equals(Prefs.panelSize(svc));
         int side = compact ? Math.max(Math.max(edges.left, edges.right) + dp(8), usable.width() / 8) : 0;
         lp.width = usable.width() - 2 * side;
@@ -1393,41 +1398,54 @@ final class Bubble implements ChatHub.Listener {
     private final Runnable outsideCollapse = () -> {
         if (expanded && pendingConfirm == null) collapse();
     };
-    private OnBackInvokedCallback backCallback;
-    private OnBackInvokedDispatcher backDispatcher;
+    // Keep API 33 back-dispatch types out of this class's field signatures: API 29 must load Bubble safely.
+    private Object backCallback;
+    private Object backDispatcher;
 
     private void registerBack() {
-        // Android 13+ only; older versions deliver KEYCODE_BACK to dispatchKeyEvent.
+        // Android 13+ only; use reflection so API 29 can load this class without API 33 types.
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return;
         if (!expanded || backDispatcher != null) return;
-        if (backCallback == null) {
-            backCallback = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
-                    ? new OnBackAnimationCallback() {
-                        @Override
-                        public void onBackStarted(BackEvent e) {
-                            root.removeCallbacks(outsideCollapse); // it's a back gesture, not a tap outside
-                        }
-
-                        @Override
-                        public void onBackInvoked() {
-                            onBack();
-                        }
-                    }
-                    : (OnBackInvokedCallback) this::onBack;
+        try {
+            Class<?> callbackType = Class.forName("android.window.OnBackInvokedCallback");
+            if (backCallback == null) {
+                backCallback = java.lang.reflect.Proxy.newProxyInstance(
+                        callbackType.getClassLoader(), new Class<?>[]{callbackType},
+                        (proxy, method, args) -> {
+                            if ("onBackInvoked".equals(method.getName())) onBack();
+                            return null;
+                        });
+            }
+            java.lang.reflect.Method find = View.class.getMethod("findOnBackInvokedDispatcher");
+            backDispatcher = find.invoke(root);
+            if (backDispatcher != null) {
+                Class<?> dispatcherType = Class.forName("android.window.OnBackInvokedDispatcher");
+                int priority = dispatcherType.getField("PRIORITY_OVERLAY").getInt(null);
+                dispatcherType.getMethod("registerOnBackInvokedCallback", int.class, callbackType)
+                        .invoke(backDispatcher, priority, backCallback);
+            }
+        } catch (Exception e) {
+            backDispatcher = null;
+            backCallback = null;
         }
-        backDispatcher = root.findOnBackInvokedDispatcher();
-        if (backDispatcher != null)
-            // Overlay priority so Buddy sees every Back (including gesture start) and closes the keyboard itself.
-            backDispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_OVERLAY, backCallback);
     }
 
     private void unregisterBack() {
-        if (backDispatcher != null) backDispatcher.unregisterOnBackInvokedCallback(backCallback);
+        if (backDispatcher != null && backCallback != null) {
+            try {
+                Class<?> callbackType = Class.forName("android.window.OnBackInvokedCallback");
+                Class<?> dispatcherType = Class.forName("android.window.OnBackInvokedDispatcher");
+                dispatcherType.getMethod("unregisterOnBackInvokedCallback", callbackType)
+                        .invoke(backDispatcher, backCallback);
+            } catch (Exception ignored) {
+            }
+        }
         backDispatcher = null;
     }
 
     private boolean keyboardVisible() {
         if (imeTop > 0) return true;
+        if (Build.VERSION.SDK_INT < 30) return false;
         WindowInsets insets = root.getRootWindowInsets();
         return insets != null && insets.isVisible(WindowInsets.Type.ime());
     }
@@ -3087,7 +3105,7 @@ final class Bubble implements ChatHub.Listener {
             public void drop(float dx, float dy, boolean cancelled) {
                 if (!thumbDragging) return;
                 thumbDragging = false;
-                Rect all = wm.getCurrentWindowMetrics().getBounds();
+                Rect all = screen();
                 int x = Math.round(thumbDragX + dx), y = Math.round(thumbDragY + dy), mid = x + thumbLp.width / 2;
                 if (!cancelled && (mid < all.left || mid > all.right)) { // dragged off a side: hidden for this run
                     dismiss();
@@ -3208,7 +3226,7 @@ final class Bubble implements ChatHub.Listener {
         if (pill.getHeight() == 0) return null;
         boolean right = (lp.gravity & Gravity.HORIZONTAL_GRAVITY_MASK) == Gravity.END;
         int fromEdge = lp.x + (right ? root.getWidth() - pill.getRight() : pill.getLeft());
-        int width = wm.getCurrentWindowMetrics().getBounds().width();
+        int width = screen().width();
         return new int[]{right ? width - fromEdge - w : fromEdge, lp.y + pill.getBottom() + dp(6)};
     }
 
@@ -3347,7 +3365,7 @@ final class Bubble implements ChatHub.Listener {
         thumbLp.width = w;
         thumbLp.height = h;
         if (free) { // where the user put it, kept on the screen
-            Rect all = wm.getCurrentWindowMetrics().getBounds();
+            Rect all = screen();
             thumbLp.gravity = Gravity.TOP | Gravity.START;
             thumbLp.x = Math.max(usable.left, Math.min(usable.right - w, Math.round(thumbX * all.width())));
             thumbLp.y = Math.max(0, Math.min(usable.bottom - usable.top - h, Math.round(thumbY * all.height())));
@@ -3966,28 +3984,57 @@ final class Bubble implements ChatHub.Listener {
         return d;
     }
 
+    /** Full physical display bounds. Display.getRealSize is available on Android 10 (API 29). */
     private Rect screen() {
-        return wm.getCurrentWindowMetrics().getBounds();
+        android.graphics.Point size = new android.graphics.Point();
+        try {
+            @SuppressWarnings("deprecation")
+            android.view.Display display = wm.getDefaultDisplay();
+            display.getRealSize(size);
+        } catch (Exception ignored) {
+            size.x = svc.getResources().getDisplayMetrics().widthPixels;
+            size.y = svc.getResources().getDisplayMetrics().heightPixels;
+        }
+        return new Rect(0, 0, Math.max(1, size.x), Math.max(1, size.y));
+    }
+
+    /** API 29 has no public system-gesture inset API; leave a zero-edge fallback. */
+    private Rect gestureInsets() {
+        return new Rect(0, 0, 0, 0);
     }
 
     /** Navigation with Back/Home/Recents buttons (3- or 2-button), not gestures: the bar is a full button row. */
     private boolean navButtons() {
-        android.graphics.Insets nav = wm.getCurrentWindowMetrics().getWindowInsets()
-                .getInsetsIgnoringVisibility(android.view.WindowInsets.Type.navigationBars());
-        return Math.max(nav.bottom, Math.max(nav.left, nav.right)) >= dp(40);
+        android.view.WindowInsets in = root == null ? null : root.getRootWindowInsets();
+        if (in == null) return dimension("navigation_bar_height") >= dp(40);
+        return Math.max(in.getStableInsetBottom(),
+                Math.max(in.getStableInsetLeft(), in.getStableInsetRight())) >= dp(40);
     }
 
-    /** The screen without the status bar (or camera cutout) and the navigation bar, wherever they are. */
+    /** The screen without status/navigation bars, using stable insets available on API 29. */
     private Rect usable() {
-        android.view.WindowMetrics m = wm.getCurrentWindowMetrics();
-        android.graphics.Insets in = m.getWindowInsets().getInsetsIgnoringVisibility(
-                android.view.WindowInsets.Type.systemBars() | android.view.WindowInsets.Type.displayCutout());
-        Rect r = new Rect(m.getBounds());
-        r.left += in.left;
-        r.top += in.top;
-        r.right -= in.right;
-        r.bottom -= in.bottom;
+        Rect r = screen();
+        android.view.WindowInsets in = root == null ? null : root.getRootWindowInsets();
+        if (in != null) {
+            r.left += in.getStableInsetLeft();
+            r.top += in.getStableInsetTop();
+            r.right -= in.getStableInsetRight();
+            r.bottom -= in.getStableInsetBottom();
+        } else {
+            // Accessibility overlays do not always receive root insets. Use Android's standard
+            // status/navigation bar dimensions as a conservative fallback.
+            int status = dimension("status_bar_height");
+            int nav = dimension("navigation_bar_height");
+            r.top += status;
+            r.bottom -= nav;
+        }
+        if (r.right <= r.left || r.bottom <= r.top) return screen();
         return r;
+    }
+
+    private int dimension(String name) {
+        int id = svc.getResources().getIdentifier(name, "dimen", "android");
+        return id == 0 ? 0 : svc.getResources().getDimensionPixelSize(id);
     }
 
     private int dp(int v) {

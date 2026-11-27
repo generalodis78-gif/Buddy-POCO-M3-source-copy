@@ -212,8 +212,17 @@ public class ChatActivity extends Screen implements ChatHub.Listener, Browser.Li
         hbp.topMargin = dp(this, 8);
         root.addView(helpersBox, hbp);
         root.getViewTreeObserver().addOnGlobalLayoutListener(() -> {
-            android.view.WindowInsets in = root.getRootWindowInsets();
-            boolean up = in != null && in.isVisible(android.view.WindowInsets.Type.ime());
+            boolean up;
+            if (android.os.Build.VERSION.SDK_INT >= 30) {
+                android.view.WindowInsets in = root.getRootWindowInsets();
+                up = in != null && in.isVisible(android.view.WindowInsets.Type.ime());
+            } else {
+                // Android 10 has no typed IME visibility inset; compare the visible frame with the full root.
+                android.graphics.Rect visible = new android.graphics.Rect();
+                root.getRootView().getWindowVisibleDisplayFrame(visible);
+                int covered = root.getRootView().getHeight() - visible.bottom;
+                up = covered > dp(this, 160);
+            }
             if (up == keyboardUp) return;
             keyboardUp = up;
             foldHelpers();

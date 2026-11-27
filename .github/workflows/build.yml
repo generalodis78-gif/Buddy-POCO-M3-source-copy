@@ -56,7 +56,7 @@ jobs:
       - name: Build release APKs (GitHub and F-Droid)
         env:
           BUDDY_KEYSTORE_PASSWORD: ${{ secrets.BUDDY_KEYSTORE_PASSWORD }}
-        run: ./gradlew --no-daemon assembleGithubRelease assembleFdroidRelease
+        run: ./gradlew --no-daemon assembleGithubDebug assembleGithubRelease assembleFdroidRelease
 
       - name: Collect APK
         run: |
@@ -65,11 +65,24 @@ jobs:
           cp "$apk" "dist/buddy-${GITHUB_REF_NAME//\//-}.apk"
           # fixed name too, so releases/latest/download/buddy.apk always gets the newest version
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then cp "$apk" dist/buddy.apk; fi
+          # Debug is signed by Gradle's temporary debug key: suitable for a first-install test, not stable updates.
+          debug=$(find app/build/outputs/apk/github/debug -name '*.apk' | head -1)
+          cp "$debug" dist/buddy-debug-test.apk
           fd=$(find app/build/outputs/apk/fdroid/release -name '*.apk' | head -1)
           # named so nobody picks it by mistake: it doesn't update itself (F-Droid's Binaries line must match this name)
           cp "$fd" "dist/fdroid-check-only-${GITHUB_REF_NAME//\//-}.apk"
           echo "FDROID_APK=$PWD/dist/fdroid-check-only-${GITHUB_REF_NAME//\//-}.apk" >> "$GITHUB_ENV"
           ls -l dist
+
+      - name: Verify Android 10 test APK metadata and signature
+        run: |
+          build_tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+          "$build_tools/aapt" dump badging dist/buddy-debug-test.apk | tee dist/buddy-debug-test.badging.txt
+          grep -q "package: name='app.buddy.assistant'" dist/buddy-debug-test.badging.txt
+          grep -q "sdkVersion:'29'" dist/buddy-debug-test.badging.txt
+          grep -q "targetSdkVersion:'36'" dist/buddy-debug-test.badging.txt
+          grep -q "native-code: 'arm64-v8a'" dist/buddy-debug-test.badging.txt
+          "$build_tools/apksigner" verify --verbose dist/buddy-debug-test.apk
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
@@ -102,7 +115,10 @@ jobs:
           submodules: true
           path: rebuild-check # a second copy at another path, as F-Droid's build machine would have
 
+      # This comparison needs the signed GitHub/F-Droid APK produced with the repository keystore.
+      # Without signing secrets both release APKs are unsigned, so apksigcopier cannot compare signatures.
       - name: Check the F-Droid APK is reproducible
+        if: env.BUDDY_KEYSTORE != ''
         run: |
           pip install --quiet apksigcopier
           export PATH="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1):$PATH" # apksigner

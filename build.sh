@@ -27,7 +27,7 @@ echo "2/6 Linking resources and manifest"
 # The manifest has no package attribute (Gradle uses `namespace`), so add it for aapt2.
 sed "s|<manifest |<manifest package=\"$PACKAGE\" |" "$SRC/AndroidManifest.xml" > "$OUT/AndroidManifest.xml"
 aapt2 link -I "$SDK_JAR" --manifest "$OUT/AndroidManifest.xml" \
-  --min-sdk-version 30 --target-sdk-version 36 \
+  --min-sdk-version 29 --target-sdk-version 36 \
   --version-code "$VERSION_CODE" --version-name "$VERSION_NAME" \
   -A "$SRC/assets" --java "$OUT/gen" -o "$OUT/base.apk" "$OUT/res.zip"
 
@@ -36,7 +36,7 @@ javac --release 8 -classpath "$SDK_JAR" -Xlint:-options -encoding UTF-8 \
   -d "$OUT/classes" $(find "$SRC/java" "app/src/$FLAVOR/java" "$OUT/gen" -name '*.java')
 
 echo "4/6 Dexing"
-d8 --release --min-api 30 --lib "$SDK_JAR" --output "$OUT/dex" $(find "$OUT/classes" -name '*.class')
+d8 --release --min-api 29 --lib "$SDK_JAR" --output "$OUT/dex" $(find "$OUT/classes" -name '*.class')
 
 echo "5/6 Packaging and aligning"
 cp "$OUT/base.apk" "$OUT/unaligned.apk"

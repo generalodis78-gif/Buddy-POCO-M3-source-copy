@@ -96,13 +96,28 @@ final class Mirrors {
         try {
             M m = current(c);
             File repos = new File(root, "etc/apk/repositories");
-            if (repos.exists()) {
-                String was = read(repos);
-                // each line is "[@tag ]<address>/<v3.24 or edge>/<main, community or testing>": the address changes
-                String now = was.replaceAll("(?m)^(@\\S+\\s+)?\\S+?/(v\\d+\\.\\d+|edge)/(main|community|testing)[ \\t]*$",
-                        "$1" + java.util.regex.Matcher.quoteReplacement(m.alpine) + "/$2/$3");
-                if (!now.equals(was)) write(repos, now);
+            String was = repos.exists() ? read(repos) : "";
+            // Each active line is "[@tag ]<address>/<v3.24 or edge>/<main, community or testing>".
+            // Replace only the host, preserving the selected Alpine branch and repository.
+            String now = was.replaceAll("(?m)^(@\\S+\\s+)?\\S+?/(v\\d+\\.\\d+|edge)/(main|community|testing)[ \\t]*$",
+                    "$1" + java.util.regex.Matcher.quoteReplacement(m.alpine) + "/$2/$3");
+            boolean hasActiveRepository = false;
+            for (String line : now.split("\\r?\\n")) {
+                String entry = line.trim();
+                if (!entry.isEmpty() && !entry.startsWith("#")
+                        && entry.matches("^(?:@\\S+\\s+)?https?://\\S+/(?:v\\d+\\.\\d+|edge)/(?:main|community|testing)$")) {
+                    hasActiveRepository = true;
+                    break;
+                }
             }
+            // Alpine minirootfs can arrive with an empty repositories file. In that case apk update
+            // succeeds without indexes and every apk add reports "no such package". Seed the matching
+            // repositories for the exact Alpine branch bundled above, including community.
+            if (!hasActiveRepository) {
+                String branch = Linux.ALPINE_PATH.substring(1, Linux.ALPINE_PATH.indexOf("/releases/"));
+                now = m.alpine + "/" + branch + "/main\n" + m.alpine + "/" + branch + "/community\n";
+            }
+            if (!now.equals(was)) write(repos, now);
             // npm's registry: only a line Buddy wrote itself is taken out again
             File npmrc = new File(root, "root/.npmrc");
             String rc = npmrc.exists() ? read(npmrc) : "", ours = Prefs.mirrorNpm(c);

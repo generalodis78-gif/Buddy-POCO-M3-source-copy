@@ -352,7 +352,17 @@ final class Marks {
 
     /** Where the shape, label and arrow go for the element's place now, all in screen pixels. */
     private void layout(Mark m) {
-        Rect screen = wm.getCurrentWindowMetrics().getBounds();
+        // WindowMetrics is API 30; use the API-29 display size on Android 10.
+        android.graphics.Point displaySize = new android.graphics.Point();
+        try {
+            @SuppressWarnings("deprecation")
+            android.view.Display display = wm.getDefaultDisplay();
+            display.getRealSize(displaySize);
+        } catch (Exception ignored) {
+            displaySize.x = svc.getResources().getDisplayMetrics().widthPixels;
+            displaySize.y = svc.getResources().getDisplayMetrics().heightPixels;
+        }
+        Rect screen = new Rect(0, 0, displaySize.x, displaySize.y);
         RectF t = new RectF(m.at);
         if ("circle".equals(style)) {
             float w = Math.max(t.width() * 1.25f + 12 * d, 48 * d), h = Math.max(t.height() * 1.35f + 12 * d, 48 * d);

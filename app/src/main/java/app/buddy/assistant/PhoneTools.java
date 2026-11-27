@@ -790,21 +790,62 @@ final class PhoneTools {
         }
         LocationManager lm = (LocationManager) svc.getSystemService(Context.LOCATION_SERVICE);
         if (lm == null || !lm.isLocationEnabled()) return "Location is turned off on the phone. Ask the user to turn it on.";
-        String provider = lm.hasProvider(LocationManager.FUSED_PROVIDER) ? LocationManager.FUSED_PROVIDER
-                : lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER) ? LocationManager.NETWORK_PROVIDER : LocationManager.GPS_PROVIDER;
+        // Fused provider and getCurrentLocation are not available on Android 10 (API 29).
+        // Prefer fused only on API 31+; API 29 uses the classic LocationListener API.
+        String provider = null;
+        if (android.os.Build.VERSION.SDK_INT >= 31) {
+            try {
+                if (lm.getProvider("fused") != null && lm.isProviderEnabled("fused")) provider = "fused";
+            } catch (Exception ignored) {
+            }
+        }
+        if (provider == null && lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+            provider = LocationManager.NETWORK_PROVIDER;
+        }
+        if (provider == null && lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+            provider = LocationManager.GPS_PROVIDER;
+        }
+        if (provider == null) return "No location provider is enabled. Turn on GPS or network location and try again.";
         AtomicReference<Location> got = new AtomicReference<>();
         java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(1);
-        android.os.CancellationSignal cancel = new android.os.CancellationSignal();
+        android.location.LocationListener legacyListener = null;
+        android.os.HandlerThread locationThread = null;
         try {
-            lm.getCurrentLocation(provider, cancel, svc.getMainExecutor(), l -> {
-                got.set(l);
-                done.countDown();
-            });
-            done.await(25, TimeUnit.SECONDS);
+            if (android.os.Build.VERSION.SDK_INT >= 30) {
+                android.os.CancellationSignal cancel = new android.os.CancellationSignal();
+                try {
+                    lm.getCurrentLocation(provider, cancel, svc.getMainExecutor(), l -> {
+                        got.set(l);
+                        done.countDown();
+                    });
+                    done.await(25, TimeUnit.SECONDS);
+                } finally {
+                    cancel.cancel();
+                }
+            } else {
+                legacyListener = new android.location.LocationListener() {
+                    @Override public void onLocationChanged(Location location) {
+                        if (got.compareAndSet(null, location)) done.countDown();
+                    }
+                    @Override public void onStatusChanged(String p, int status, android.os.Bundle extras) { }
+                    @Override public void onProviderEnabled(String p) { }
+                    @Override public void onProviderDisabled(String p) { }
+                };
+                // A private callback looper avoids depending on the caller thread or blocking the UI thread.
+                locationThread = new android.os.HandlerThread("BuddyLocation");
+                locationThread.start();
+                lm.requestLocationUpdates(provider, 1000L, 0f, legacyListener, locationThread.getLooper());
+                done.await(25, TimeUnit.SECONDS);
+            }
         } catch (SecurityException e) {
             return "Buddy isn't allowed to use the location.";
+        } catch (IllegalArgumentException e) {
+            return "The phone's location provider isn't available. Try turning location off and on.";
         } finally {
-            cancel.cancel();
+            if (legacyListener != null) {
+                try { lm.removeUpdates(legacyListener); } catch (Exception ignored) { }
+            }
+            if (locationThread != null) locationThread.quitSafely();
         }
         Location l = got.get();
         if (l == null) {
