@@ -37,10 +37,6 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 import android.os.Build;
-import android.window.BackEvent;
-import android.window.OnBackAnimationCallback;
-import android.window.OnBackInvokedCallback;
-import android.window.OnBackInvokedDispatcher;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -1402,36 +1398,48 @@ final class Bubble implements ChatHub.Listener {
     private final Runnable outsideCollapse = () -> {
         if (expanded && pendingConfirm == null) collapse();
     };
-    private OnBackInvokedCallback backCallback;
-    private OnBackInvokedDispatcher backDispatcher;
+    // Keep API 33 back-dispatch types out of this class's field signatures: API 29 must load Bubble safely.
+    private Object backCallback;
+    private Object backDispatcher;
 
     private void registerBack() {
-        // Android 13+ only; older versions deliver KEYCODE_BACK to dispatchKeyEvent.
+        // Android 13+ only; use reflection so API 29 can load this class without API 33 types.
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return;
         if (!expanded || backDispatcher != null) return;
-        if (backCallback == null) {
-            backCallback = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
-                    ? new OnBackAnimationCallback() {
-                        @Override
-                        public void onBackStarted(BackEvent e) {
-                            root.removeCallbacks(outsideCollapse); // it's a back gesture, not a tap outside
-                        }
-
-                        @Override
-                        public void onBackInvoked() {
-                            onBack();
-                        }
-                    }
-                    : (OnBackInvokedCallback) this::onBack;
+        try {
+            Class<?> callbackType = Class.forName("android.window.OnBackInvokedCallback");
+            if (backCallback == null) {
+                backCallback = java.lang.reflect.Proxy.newProxyInstance(
+                        callbackType.getClassLoader(), new Class<?>[]{callbackType},
+                        (proxy, method, args) -> {
+                            if ("onBackInvoked".equals(method.getName())) onBack();
+                            return null;
+                        });
+            }
+            java.lang.reflect.Method find = View.class.getMethod("findOnBackInvokedDispatcher");
+            backDispatcher = find.invoke(root);
+            if (backDispatcher != null) {
+                Class<?> dispatcherType = Class.forName("android.window.OnBackInvokedDispatcher");
+                int priority = dispatcherType.getField("PRIORITY_OVERLAY").getInt(null);
+                dispatcherType.getMethod("registerOnBackInvokedCallback", int.class, callbackType)
+                        .invoke(backDispatcher, priority, backCallback);
+            }
+        } catch (Exception e) {
+            backDispatcher = null;
+            backCallback = null;
         }
-        backDispatcher = root.findOnBackInvokedDispatcher();
-        if (backDispatcher != null)
-            // Overlay priority so Buddy sees every Back (including gesture start) and closes the keyboard itself.
-            backDispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_OVERLAY, backCallback);
     }
 
     private void unregisterBack() {
-        if (backDispatcher != null) backDispatcher.unregisterOnBackInvokedCallback(backCallback);
+        if (backDispatcher != null && backCallback != null) {
+            try {
+                Class<?> callbackType = Class.forName("android.window.OnBackInvokedCallback");
+                Class<?> dispatcherType = Class.forName("android.window.OnBackInvokedDispatcher");
+                dispatcherType.getMethod("unregisterOnBackInvokedCallback", callbackType)
+                        .invoke(backDispatcher, backCallback);
+            } catch (Exception ignored) {
+            }
+        }
         backDispatcher = null;
     }
 
