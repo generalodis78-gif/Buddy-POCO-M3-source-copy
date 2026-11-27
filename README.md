@@ -12,6 +12,8 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache_2.0-blue?style=for-the-badge" alt="License: Apache-2.0"></a>
 </p>
 
+> **POCO M3 / Android 10 port:** experimental compatibility work is in the `poco-m3-android10` branch. The upstream app requires Android 11+; this branch lowers the build minimum to API 29, but it is not yet verified on a physical POCO M3. The Android 11+ badge above describes the upstream release, not a confirmed device-tested result for this port.
+
 # Buddy
 
 **A floating chat bubble that lets Claude Code, Codex, OpenCode, Antigravity, Grok, Copilot or Pi use your Android phone.**
