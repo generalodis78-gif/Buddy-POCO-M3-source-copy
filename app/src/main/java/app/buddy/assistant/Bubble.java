@@ -1437,6 +1437,7 @@ final class Bubble implements ChatHub.Listener {
 
     private boolean keyboardVisible() {
         if (imeTop > 0) return true;
+        if (Build.VERSION.SDK_INT < 30) return false;
         WindowInsets insets = root.getRootWindowInsets();
         return insets != null && insets.isVisible(WindowInsets.Type.ime());
     }
