@@ -12,7 +12,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 HERE=$PWD
-API=30
+API=29
 PROOT_VERSION=5.1.107.102 # third_party/proot is at this tag
 TP=$HERE/../third_party
 
