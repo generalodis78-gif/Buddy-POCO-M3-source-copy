@@ -19,7 +19,7 @@ android {
 
     defaultConfig {
         applicationId = "app.buddy.assistant"
-        minSdk = 30
+        minSdk = 29
         targetSdk = 36
         versionCode = appVersionCode
         versionName = appVersionName
