@@ -115,7 +115,7 @@ final class Mirrors {
             // repositories for the exact Alpine branch bundled above, including community.
             if (!hasActiveRepository) {
                 String branch = Linux.ALPINE_PATH.substring(1, Linux.ALPINE_PATH.indexOf("/releases/"));
-                now = m.alpine + "/" + branch + "/main\\n" + m.alpine + "/" + branch + "/community\\n";
+                now = m.alpine + "/" + branch + "/main\n" + m.alpine + "/" + branch + "/community\n";
             }
             if (!now.equals(was)) write(repos, now);
             // npm's registry: only a line Buddy wrote itself is taken out again
