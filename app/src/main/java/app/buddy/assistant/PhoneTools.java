@@ -809,6 +809,7 @@ final class PhoneTools {
         AtomicReference<Location> got = new AtomicReference<>();
         java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(1);
         android.location.LocationListener legacyListener = null;
+        android.os.HandlerThread locationThread = null;
         try {
             if (android.os.Build.VERSION.SDK_INT >= 30) {
                 android.os.CancellationSignal cancel = new android.os.CancellationSignal();
@@ -830,7 +831,10 @@ final class PhoneTools {
                     @Override public void onProviderEnabled(String p) { }
                     @Override public void onProviderDisabled(String p) { }
                 };
-                lm.requestLocationUpdates(provider, 1000L, 0f, legacyListener, android.os.Looper.getMainLooper());
+                // A private callback looper avoids depending on the caller thread or blocking the UI thread.
+                locationThread = new android.os.HandlerThread("BuddyLocation");
+                locationThread.start();
+                lm.requestLocationUpdates(provider, 1000L, 0f, legacyListener, locationThread.getLooper());
                 done.await(25, TimeUnit.SECONDS);
             }
         } catch (SecurityException e) {
@@ -841,6 +845,7 @@ final class PhoneTools {
             if (legacyListener != null) {
                 try { lm.removeUpdates(legacyListener); } catch (Exception ignored) { }
             }
+            if (locationThread != null) locationThread.quitSafely();
         }
         Location l = got.get();
         if (l == null) {
